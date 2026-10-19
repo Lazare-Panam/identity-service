@@ -1,9 +1,26 @@
+# Local development database: SQL Server in Docker, started automatically by Spring Boot
+# (spring-boot-docker-compose) when the app runs from IntelliJ. Never used in production.
 services:
   sqlserver:
-    image: 'mcr.microsoft.com/mssql/server:latest'
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    platform: linux/amd64 # Microsoft only publishes amd64; runs on Apple Silicon via Rosetta
     environment:
-      - 'ACCEPT_EULA=yes'
-      - 'MSSQL_PID=express'
-      - 'MSSQL_SA_PASSWORD=verYs3cret'
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "Identity_Local_2026" # local only
     ports:
-      - '1433'
+      - "1434:1433" # 1434 on the Mac, so it can run next to kosaplus-api's SQL Server (1433)
+    volumes:
+      - identity-sqlserver-data:/var/opt/mssql # keeps the data between restarts
+    labels:
+      # The container uses a self-signed certificate, so tell the driver to trust it
+      org.springframework.boot.jdbc.parameters: "trustServerCertificate=true"
+    healthcheck:
+      # Spring Boot waits until this passes before connecting
+      test: /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P "$$MSSQL_SA_PASSWORD" -Q "SELECT 1" -b -o /dev/null
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+volumes:
+  identity-sqlserver-data:
