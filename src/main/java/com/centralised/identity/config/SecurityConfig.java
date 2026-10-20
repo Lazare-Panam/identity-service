@@ -54,7 +54,7 @@ public class SecurityConfig {
                         .requestMatchers("/login", "/register", "/error").permitAll()
                         .anyRequest().authenticated()
                 )
-                .formLogin(Customizer.withDefaults());
+                .formLogin(form -> form.loginPage("/login").permitAll());
 
         return http.build();
     }
