@@ -1,0 +1,6 @@
+# Not sent into the Docker build
+target
+.idea
+.git
+*.iml
+compose.yaml
