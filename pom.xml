@@ -28,6 +28,9 @@
 	</scm>
 	<properties>
 		<java.version>25</java.version>
+		<!-- Spring Boot 4.1.1 ships Tomcat 11.0.24, which has critical CVEs (fixed in 11.0.25).
+		     Remove once Spring Boot brings a fixed Tomcat. -->
+		<tomcat.version>11.0.27</tomcat.version>
 	</properties>
 	<dependencies>
 		<dependency>
