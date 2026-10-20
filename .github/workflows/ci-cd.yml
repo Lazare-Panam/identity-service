@@ -1,0 +1,159 @@
+name: CI/CD
+
+# Pull request: test + build an image tagged pr-<number>-<short sha> (not deployed)
+# Push to main: test + build an image tagged <short sha> + deploy it
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+  # Nightly rebuild (02:00 UTC) to pick up base-image security patches
+  # schedule:
+  #   - cron: '0 2 * * *'
+
+permissions:
+  contents: read
+  id-token: write # OIDC token for the Azure login
+
+# A newer run waits for the running one, so two deployments never overlap
+concurrency:
+  group: ci-cd-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: dimages.azurecr.io
+  IMAGE: identity-service
+  APP: identity-service
+  RESOURCE_GROUP: rg-identity-service
+  APP_URL: https://identity-service.mangobeach-29eb5614.ukwest.azurecontainerapps.io
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+
+      # Tests use a temporary SQL Server (Testcontainers)
+      - name: Build and test
+        run: ./mvnw -B verify
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-reports
+          path: target/surefire-reports
+          if-no-files-found: ignore
+
+  image:
+    needs: build-test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write # to comment the image tag on the PR
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+
+      # On a PR, github.sha is GitHub's temporary merge commit, so use the PR's own commit
+      - name: Choose image tag
+        id: tag
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [ -n "$PR_NUMBER" ]; then
+            TAG="pr-${PR_NUMBER}-${PR_SHA::7}"
+          else
+            TAG="${GITHUB_SHA::7}"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Log in to ACR
+        run: az acr login --name dimages
+
+      - name: Build image
+        run: docker build -t ${{ env.REGISTRY }}/${{ env.IMAGE }}:${{ steps.tag.outputs.tag }} .
+
+      - name: Scan image (Trivy)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE }}:${{ steps.tag.outputs.tag }}
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+
+      - name: Push image
+        run: docker push ${{ env.REGISTRY }}/${{ env.IMAGE }}:${{ steps.tag.outputs.tag }}
+
+      # Shown on the run's Summary page, with the command to try this image by hand
+      - name: Summary
+        run: |
+          {
+            echo "### Image \`${{ env.IMAGE }}:${{ steps.tag.outputs.tag }}\`"
+            echo '```'
+            echo "az containerapp update -n ${{ env.APP }} -g ${{ env.RESOURCE_GROUP }} --image ${{ env.REGISTRY }}/${{ env.IMAGE }}:${{ steps.tag.outputs.tag }}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # On a PR: comment the tag, to pick it in the portal (Containers → Image tag) if wanted
+      - name: Comment image tag on PR
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          gh pr comment "$PR_NUMBER" --repo "${{ github.repository }}" --body "🐳 Image ready (not deployed): \`${{ env.REGISTRY }}/${{ env.IMAGE }}:$TAG\`
+
+          To try it: Azure portal → identity-service → Containers → Image tag **\`$TAG\`** → Save as a new revision.
+          ⚠️ Runs on production (identitySQL), and any new migration in this PR is applied."
+
+  deploy:
+    needs: image
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy to Container Apps
+        run: |
+          az containerapp update \
+            --name ${{ env.APP }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --image ${{ env.REGISTRY }}/${{ env.IMAGE }}:${{ needs.image.outputs.tag }}
+
+  smoke-test:
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      # Retries give the new revision time to start
+      # Discovery document is public and shows the issuer every token will carry
+      - name: Discovery document has the right issuer
+        run: |
+          curl --fail --silent --show-error --retry 10 --retry-delay 10 --retry-all-errors \
+            ${{ env.APP_URL }}/.well-known/openid-configuration | grep -q '"issuer":"${{ env.APP_URL }}"'
+
+      - name: Login page loads
+        run: |
+          curl --fail --silent --show-error --retry 5 --retry-delay 5 --retry-all-errors \
+            ${{ env.APP_URL }}/login | grep -q 'Welcome back'
