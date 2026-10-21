@@ -8,4 +8,5 @@ import java.util.UUID;
 
 public interface AppUserRepository extends JpaRepository<AppUser, UUID> {
     Optional<AppUser> findByBrand_CodeAndEmail(String brandCode, String email);
+    boolean existsByBrand_CodeAndEmail(String brandCode, String email);
 }
