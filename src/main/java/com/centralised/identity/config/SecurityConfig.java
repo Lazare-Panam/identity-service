@@ -1,5 +1,6 @@
 package com.centralised.identity.config;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.Order;
@@ -11,6 +12,11 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.LoginUrlAuthenticationEntryPoint;
 import org.springframework.security.web.util.matcher.MediaTypeRequestMatcher;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+
+import java.util.List;
 
 @Configuration
 public class SecurityConfig {
@@ -31,6 +37,8 @@ public class SecurityConfig {
                     authorizationServer
                             .oidc(Customizer.withDefaults());
                 })
+                // The website's browser code calls /oauth2/token and /oauth2/jwks directly
+                .cors(Customizer.withDefaults())
                 .authorizeHttpRequests(authorize -> authorize
                         .anyRequest().authenticated()
                 )
@@ -43,6 +51,18 @@ public class SecurityConfig {
                 );
 
         return http.build();
+    }
+
+    // Which websites may call the endpoints above from the browser
+    @Bean
+    public CorsConfigurationSource corsConfigurationSource(@Value("${app.cors.allowed-origins}") List<String> origins) {
+        CorsConfiguration config = new CorsConfiguration();
+        config.setAllowedOrigins(origins);
+        config.setAllowedMethods(List.of("GET", "POST", "OPTIONS"));
+        config.setAllowedHeaders(List.of("*"));
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/**", config);
+        return source;
     }
 
     // Desk 2: every other page; login and register are open to everyone

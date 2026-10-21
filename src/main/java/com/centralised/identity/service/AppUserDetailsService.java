@@ -26,7 +26,8 @@ public class AppUserDetailsService implements UserDetailsService {
         boolean locked = appUser.getLockedUntil() != null
                 && appUser.getLockedUntil().isAfter(LocalDateTime.now());
 
-        return User.withUsername(appUser.getEmail())
+        // The username Spring keeps is the permanent user id: tokens carry it as "sub" (emails can change)
+        return User.withUsername(appUser.getId().toString())
                 .password(appUser.getPasswordHash())
                 .disabled(!appUser.isEnabled())
                 .accountLocked(locked)
