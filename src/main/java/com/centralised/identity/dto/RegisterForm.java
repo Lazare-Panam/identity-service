@@ -18,7 +18,7 @@ public class RegisterForm {
     private String email;
 
     @NotBlank(message = "Please choose a password")
-    @Size(min = 8, max = 100, message = "Password must be 8 to 100 characters")
+    @Size(min = 10, max = 100, message = "Password must be at least 10 characters")
     private String password;
 
     @NotBlank(message = "Please enter your first name")
