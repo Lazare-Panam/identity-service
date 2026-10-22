@@ -30,12 +30,14 @@ public class SecurityConfig {
     // Desk 1: only the OAuth endpoints (/oauth2/authorize, /oauth2/token, /oauth2/jwks, /.well-known/...)
     @Bean
     @Order(1)
-    public SecurityFilterChain authorizationServerSecurityFilterChain(HttpSecurity http) throws Exception {
+    public SecurityFilterChain authorizationServerSecurityFilterChain(HttpSecurity http,
+                                                                      SafeLogoutErrorHandler logoutErrorHandler) throws Exception {
         http
                 .oauth2AuthorizationServer(authorizationServer -> {
                     http.securityMatcher(authorizationServer.getEndpointsMatcher());
                     authorizationServer
-                            .oidc(Customizer.withDefaults());
+                            .oidc(oidc -> oidc
+                                    .logoutEndpoint(logout -> logout.errorResponseHandler(logoutErrorHandler)));
                 })
                 // The website's browser code calls /oauth2/token and /oauth2/jwks directly
                 .cors(Customizer.withDefaults())
